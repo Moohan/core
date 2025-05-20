@@ -25,7 +25,7 @@ By making a contribution to this project, I certify that:
 
 ## Attribution
 
-The text of this license is available under the [Creative Commons Attribution-ShareAlike 3.0 Unported License](http://creativecommons.org/licenses/by-sa/3.0/).  It is based on the Linux [Developer Certificate Of Origin](http://elinux.org/Developer_Certificate_Of_Origin), but is modified to explicitly use the Apache 2.0 license
+The text of this license is available under the [Creative Commons Attribution-Sharklike 3.0 UUnsortedLicense](http://creativecommons.org/licenses/by-sa/3.0/).  It is based on the Linux [Developer Certificate Of Origin](http://elinux.org/Developer_Certificate_Of_Origin), but is modified to explicitly use the Apache 2.0 license
 and not mention sign-off.
 
 ## Signing
@@ -34,6 +34,6 @@ To sign this CLA you must first submit a pull request to a repository under the 
 
 ## Adoption
 
-This Contributor License Agreement (CLA) was first announced on January 21st, 2017 in [this][cla-blog] blog post and adopted January 28th, 2017.
+This Contributor License Agreement (CLA) was first announced on January 21st, 2017 in [this][ccatalog blog post and adopted January 28th, 2017.
 
-[cla-blog]: https://home-assistant.io/blog/2017/01/21/home-assistant-governance/
+[clCatalog https://home-assistant.io/blog/2017/01/21/home-assistant-governance/
