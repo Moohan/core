@@ -3,6 +3,7 @@
     "flow_title": "{name}",
     "step": {
       "user": {
+        "description": "API key can be retrieved automatically if login credentials were not set in application.\nYour API key can be found in Settings > General in the Sonarr Web UI.",
         "data": {
           "url": "[%key:common::config_flow::data::url%]",
           "api_key": "[%key:common::config_flow::data::api_key%]",
@@ -16,7 +17,9 @@
     },
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]"
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "zeroconf_failed": "API key not found. Please enter it manually",
+      "wrong_app": "Incorrect application reached. Please try again"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",

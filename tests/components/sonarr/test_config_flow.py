@@ -2,7 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from aiopyarr import ArrAuthenticationException, ArrException
+from aiohttp import ClientConnectorError
+from aiopyarr import exceptions
 
 from homeassistant.components.sonarr.const import (
     CONF_UPCOMING_DAYS,
@@ -25,18 +26,49 @@ async def test_show_user_form(hass: HomeAssistant) -> None:
     """Test that the user set up form is served."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
-        context={CONF_SOURCE: SOURCE_USER},
+        context={CONF_SOURCE: SOURCE_USER, "show_advanced_options": True},
     )
 
     assert result["step_id"] == "user"
     assert result["type"] is FlowResultType.FORM
+    # URL should have the correct default
+    assert (
+        result["data_schema"].schema[CONF_URL].default() == "http://127.0.0.1:8989"
+    )
+    # API key should be optional in the initial user form
+    assert not result["data_schema"].schema[CONF_API_KEY].required
+    # When advanced options are enabled, verify_ssl should default to False
+    assert result["data_schema"].schema[CONF_VERIFY_SSL].default() is False
 
 
 async def test_cannot_connect(
     hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
 ) -> None:
     """Test we show user form on connection error."""
-    mock_sonarr_config_flow.async_get_system_status.side_effect = ArrException
+    mock_sonarr_config_flow.async_get_system_status.side_effect = (
+        exceptions.ArrConnectionException
+    )
+
+    user_input = MOCK_USER_INPUT.copy()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_cannot_connect_client_connector_error(
+    hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
+) -> None:
+    """Test we show user form on aiohttp client connection error."""
+    mock_sonarr_config_flow.async_get_system_status.side_effect = ClientConnectorError(
+        connection_key=None,
+        os_error=OSError(),
+    )
 
     user_input = MOCK_USER_INPUT.copy()
     result = await hass.config_entries.flow.async_init(
@@ -83,7 +115,7 @@ async def test_invalid_auth(
 ) -> None:
     """Test we show user form on invalid auth."""
     mock_sonarr_config_flow.async_get_system_status.side_effect = (
-        ArrAuthenticationException
+        exceptions.ArrAuthenticationException
     )
 
     user_input = MOCK_USER_INPUT.copy()
@@ -98,10 +130,74 @@ async def test_invalid_auth(
     assert result["errors"] == {"base": "invalid_auth"}
 
 
+async def test_wrong_app(
+    hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
+) -> None:
+    """Test we show user form on wrong app."""
+    mock_sonarr_config_flow.async_try_zeroconf.side_effect = (
+        exceptions.ArrWrongAppException
+    )
+
+    user_input = MOCK_USER_INPUT.copy()
+    user_input.pop(CONF_API_KEY)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "wrong_app"}
+
+
+async def test_zero_conf_failure(
+    hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
+) -> None:
+    """Test we show user form on api key retrieval failure."""
+    mock_sonarr_config_flow.async_try_zeroconf.side_effect = (
+        exceptions.ArrZeroConfException
+    )
+
+    user_input = MOCK_USER_INPUT.copy()
+    user_input.pop(CONF_API_KEY)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "zeroconf_failed"}
+
+
 async def test_unknown_error(
     hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
 ) -> None:
     """Test we show user form on unknown error."""
+    mock_sonarr_config_flow.async_get_system_status.side_effect = (
+        exceptions.ArrException
+    )
+
+    user_input = MOCK_USER_INPUT.copy()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "unknown"}
+
+
+async def test_unexpected_exception_abort(
+    hass: HomeAssistant, mock_sonarr_config_flow: MagicMock
+) -> None:
+    """Test we abort on unexpected exception."""
     mock_sonarr_config_flow.async_get_system_status.side_effect = Exception
 
     user_input = MOCK_USER_INPUT.copy()
@@ -113,6 +209,56 @@ async def test_unknown_error(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "unknown"
+
+
+async def test_zero_conf(
+    hass: HomeAssistant,
+    mock_sonarr_config_flow: MagicMock,
+    mock_setup_entry: None,
+) -> None:
+    """Test the manual flow for zero config."""
+    mock_sonarr_config_flow.async_try_zeroconf.return_value = (
+        "v3",
+        "MOCK_API_KEY",
+        "/test",
+    )
+
+    user_input = MOCK_USER_INPUT.copy()
+    user_input.pop(CONF_API_KEY)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "192.168.1.189"
+    assert result["data"][CONF_URL] == MOCK_USER_INPUT[CONF_URL]
+    assert result["data"][CONF_API_KEY] == MOCK_USER_INPUT[CONF_API_KEY]
+    assert result["data"][CONF_VERIFY_SSL] is False
+
+
+async def test_zero_conf_not_used_when_api_key_provided(
+    hass: HomeAssistant,
+    mock_sonarr_config_flow: MagicMock,
+    mock_setup_entry: None,
+) -> None:
+    """Test Zeroconf is not used when an API key is provided."""
+    user_input = MOCK_USER_INPUT.copy()
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={CONF_SOURCE: SOURCE_USER},
+        data=user_input,
+    )
+
+    mock_sonarr_config_flow.async_try_zeroconf.assert_not_called()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "192.168.1.189"
+    assert result["data"][CONF_URL] == MOCK_USER_INPUT[CONF_URL]
+    assert result["data"][CONF_API_KEY] == MOCK_USER_INPUT[CONF_API_KEY]
+    assert result["data"][CONF_VERIFY_SSL] is False
 
 
 async def test_full_reauth_flow_implementation(
