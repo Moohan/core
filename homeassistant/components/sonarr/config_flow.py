@@ -6,7 +6,8 @@ from collections.abc import Mapping
 import logging
 from typing import Any
 
-from aiopyarr import ArrAuthenticationException, ArrException
+from aiohttp import ClientConnectorError
+from aiopyarr import exceptions
 from aiopyarr.models.host_configuration import PyArrHostConfiguration
 from aiopyarr.sonarr_client import SonarrClient
 import voluptuous as vol
@@ -27,6 +28,7 @@ from .const import (
     CONF_UPCOMING_DAYS,
     CONF_WANTED_MAX_ITEMS,
     DEFAULT_UPCOMING_DAYS,
+    DEFAULT_URL,
     DEFAULT_VERIFY_SSL,
     DEFAULT_WANTED_MAX_ITEMS,
     DOMAIN,
@@ -35,13 +37,12 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from DATA_SCHEMA with values provided by the user.
-    """
+async def _validate_input(
+    hass: HomeAssistant, data: dict[str, Any]
+) -> tuple[str, str, str] | None:
+    """Validate the user input allows us to connect."""
     host_configuration = PyArrHostConfiguration(
-        api_token=data[CONF_API_KEY],
+        api_token=data.get(CONF_API_KEY, ""),
         url=data[CONF_URL],
         verify_ssl=data[CONF_VERIFY_SSL],
     )
@@ -51,7 +52,11 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
         session=async_get_clientsession(hass),
     )
 
+    if not data.get(CONF_API_KEY):
+        return await sonarr.async_try_zeroconf()
+
     await sonarr.async_get_system_status()
+    return None
 
 
 class SonarrConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -107,11 +112,18 @@ class SonarrConfigFlow(ConfigFlow, domain=DOMAIN):
                 user_input[CONF_VERIFY_SSL] = DEFAULT_VERIFY_SSL
 
             try:
-                await _validate_input(self.hass, user_input)
-            except ArrAuthenticationException:
+                if result := await _validate_input(self.hass, user_input):
+                    user_input[CONF_API_KEY] = result[1]
+            except exceptions.ArrAuthenticationException:
                 errors = {"base": "invalid_auth"}
-            except ArrException:
+            except (ClientConnectorError, exceptions.ArrConnectionException):
                 errors = {"base": "cannot_connect"}
+            except exceptions.ArrWrongAppException:
+                errors = {"base": "wrong_app"}
+            except exceptions.ArrZeroConfException:
+                errors = {"base": "zeroconf_failed"}
+            except exceptions.ArrException:
+                errors = {"base": "unknown"}
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 return self.async_abort(reason="unknown")
@@ -127,27 +139,39 @@ class SonarrConfigFlow(ConfigFlow, domain=DOMAIN):
                     title=parsed.host or "Sonarr", data=user_input
                 )
 
-        data_schema = self._get_user_data_schema()
+        if user_input is None:
+            user_input = {}
+            if self.source == SOURCE_REAUTH:
+                user_input = dict(self._get_reauth_entry().data)
+
+        data_schema = self._get_user_data_schema(user_input)
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(data_schema),
             errors=errors,
         )
 
-    def _get_user_data_schema(self) -> dict[vol.Marker, type]:
+    def _get_user_data_schema(
+        self, user_input: dict[str, Any]
+    ) -> dict[vol.Marker, Any]:
         """Get the data schema to display user form."""
         if self.source == SOURCE_REAUTH:
             return {vol.Required(CONF_API_KEY): str}
 
-        data_schema: dict[vol.Marker, type] = {
-            vol.Required(CONF_URL): str,
-            vol.Required(CONF_API_KEY): str,
+        data_schema: dict[vol.Marker, Any] = {
+            vol.Required(
+                CONF_URL, default=user_input.get(CONF_URL, DEFAULT_URL)
+            ): str,
+            vol.Optional(CONF_API_KEY): str,
         }
 
         if self.show_advanced_options:
-            data_schema[vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL)] = (
-                bool
-            )
+            data_schema[
+                vol.Optional(
+                    CONF_VERIFY_SSL,
+                    default=user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                )
+            ] = bool
 
         return data_schema
 
